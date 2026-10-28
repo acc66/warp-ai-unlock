@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # WARP SOCKS5 for XboardNode-Plus AI unlock
-# 用法: bash warp-ai.sh [install|uninstall|status|check|key|panel]，不带参数进入菜单
+# 用法: warp-ai [install|uninstall|status|check|key|panel|update|version]，不带参数进入菜单
 set -uo pipefail
+
+VERSION=1.1.0
+SCRIPT_URL=https://raw.githubusercontent.com/acc66/warp-ai-unlock/main/warp-ai.sh
+SELF=/usr/local/bin/warp-ai
 
 WARP_DIR=/etc/warp-ai
 BIN_DIR=/usr/local/bin
@@ -44,17 +48,21 @@ latest_tag() { # $1=owner/repo
 
 install_wgcf() {
   local v; v=$(latest_tag ViRb3/wgcf); v=${v#v}; v=${v:-$WGCF_FALLBACK}
-  curl -fL -o "$BIN_DIR/wgcf" \
+  local tmp; tmp=$(mktemp)
+  curl -fL -o "$tmp" \
     "https://github.com/ViRb3/wgcf/releases/download/v${v}/wgcf_${v}_linux_${ARCH}" \
-    || die "wgcf 下载失败"
-  chmod +x "$BIN_DIR/wgcf"
+    || { rm -f "$tmp"; die "wgcf 下载失败"; }
+  chmod +x "$tmp" && mv -f "$tmp" "$BIN_DIR/wgcf"
 }
 
 install_wireproxy() {
   local v; v=$(latest_tag whyvl/wireproxy); v=${v:-$WIREPROXY_FALLBACK}
+  # 先解压到临时目录再 mv，升级时不会碰到正在运行的二进制（Text file busy）
+  local d; d=$(mktemp -d)
   curl -fL "https://github.com/whyvl/wireproxy/releases/download/${v}/wireproxy_linux_${ARCH}.tar.gz" \
-    | tar xz -C "$BIN_DIR" wireproxy || die "wireproxy 下载失败"
-  chmod +x "$BIN_DIR/wireproxy"
+    | tar xz -C "$d" wireproxy || { rm -rf "$d"; die "wireproxy 下载失败"; }
+  chmod +x "$d/wireproxy" && mv -f "$d/wireproxy" "$BIN_DIR/wireproxy"
+  rm -rf "$d"
 }
 
 # 按路由表选 endpoint：有 v4 路由用 v4，只有 v6 才用 v6；可用 WARP_ENDPOINT 手动指定
@@ -289,14 +297,68 @@ do_install() {
   install_wireproxy
   register_warp
   write_config
+  install_self
   sleep 3
   warp_ok && check_ai
   print_panel
+  green "\n以后直接运行 warp-ai 即可打开菜单"
+}
+
+# 下载最新脚本到临时文件，校验语法后输出路径
+fetch_script() {
+  local tmp; tmp=$(mktemp) || return 1
+  if ! curl -fsSL -m 30 "$SCRIPT_URL" -o "$tmp" || ! bash -n "$tmp" 2>/dev/null \
+     || ! grep -q '^VERSION=' "$tmp"; then
+    rm -f "$tmp"; return 1
+  fi
+  echo "$tmp"
+}
+
+# 装成 /usr/local/bin/warp-ai；用 mv 替换，避免覆盖正在运行的脚本
+install_self() {
+  local tmp; tmp=$(fetch_script) || { yellow "warp-ai 命令安装失败，可稍后运行 update"; return 1; }
+  chmod 755 "$tmp" && mv -f "$tmp" "$SELF"
+}
+
+remote_version() { curl -fsSL -m 10 "$SCRIPT_URL" 2>/dev/null | sed -n 's/^VERSION=//p' | head -1; }
+
+do_version() {
+  echo "当前版本: $VERSION"
+  local r; r=$(remote_version)
+  echo "最新版本: ${r:-获取失败}"
+  [[ -n "$r" && "$r" != "$VERSION" ]] && yellow "有新版本，运行 warp-ai update 升级"
+  [[ -x "$BIN_DIR/wgcf" ]] && echo "wgcf: $("$BIN_DIR/wgcf" --version 2>/dev/null | head -1)"
+  [[ -x "$BIN_DIR/wireproxy" ]] && echo "wireproxy: $("$BIN_DIR/wireproxy" --version 2>/dev/null | head -1)"
+  return 0
+}
+
+# 在线升级：脚本 + wgcf + wireproxy，配置和账户不动
+do_update() {
+  local tmp new
+  tmp=$(fetch_script) || die "下载新版本失败，请检查网络"
+  new=$(sed -n 's/^VERSION=//p' "$tmp" | head -1)
+  if [[ "$new" == "$VERSION" && "${1:-}" != "-f" ]]; then
+    green "已是最新版本 $VERSION"
+  else
+    chmod 755 "$tmp" && mv -f "$tmp" "$SELF"
+    green "脚本已升级: $VERSION -> $new"
+  fi
+  rm -f "$tmp"
+  if [[ -f "$WARP_DIR/wireproxy.conf" ]]; then
+    detect_arch
+    echo "更新 wgcf / wireproxy ..."
+    install_wgcf
+    install_wireproxy
+    systemctl restart ${SERVICE} || die "服务重启失败: journalctl -u ${SERVICE} -n 50"
+    sleep 3
+    warp_ok
+  fi
+  green "升级完成，运行 warp-ai 使用新版本"
 }
 
 do_uninstall() {
   systemctl disable --now ${SERVICE} 2>/dev/null
-  rm -f /etc/systemd/system/${SERVICE}.service "$BIN_DIR/wireproxy" "$BIN_DIR/wgcf"
+  rm -f /etc/systemd/system/${SERVICE}.service "$BIN_DIR/wireproxy" "$BIN_DIR/wgcf" "$SELF"
   rm -rf "$WARP_DIR"
   systemctl daemon-reload
   green "已卸载"
@@ -306,13 +368,14 @@ menu() {
   local c
   while true; do
     echo
-    echo "======== WARP AI 解锁 ========"
+    echo "===== WARP AI 解锁 v${VERSION} ====="
     echo " 1. 安装 / 重装 WARP"
     echo " 2. AI 解锁检测"
     echo " 3. 查看状态"
     echo " 4. 打印面板配置"
     echo " 5. 绑定 / 更换 WARP+ key"
-    echo " 6. 卸载"
+    echo " 6. 在线升级"
+    echo " 7. 卸载"
     echo " 0. 退出"
     # 兼容 curl | bash：从终端读输入
     read -rp "请选择: " c </dev/tty || exit 0
@@ -322,7 +385,8 @@ menu() {
       3) systemctl status ${SERVICE} --no-pager; warp_ok ;;
       4) print_panel ;;
       5) need_root; do_key ;;
-      6) need_root; do_uninstall ;;
+      6) need_root; do_update; exit 0 ;;
+      7) need_root; do_uninstall ;;
       0) exit 0 ;;
       *) red "无效选项" ;;
     esac
@@ -336,6 +400,9 @@ case "${1:-}" in
   check)     check_ai ;;
   key)       need_root; do_key "${2:-}" ;;
   panel)     print_panel ;;
+  update)    need_root; do_update "${2:-}" ;;
+  version|-v|--version) do_version ;;
   "")        if [[ -r /dev/tty ]]; then menu; else check_ai; fi ;;
-  *) echo "用法: $0 [install|uninstall|status|check|key|panel]" ;;
+  *) echo "warp-ai v${VERSION}"
+     echo "用法: warp-ai [install|uninstall|status|check|key|panel|update|version]" ;;
 esac

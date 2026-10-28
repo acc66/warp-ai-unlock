@@ -93,7 +93,7 @@ WARP 正常: ip=2a09:bac5:... loc=US warp=on
 | `WARP_KEY` | WARP+ license key，留空则使用免费版 | 空 |
 
 ```bash
-SOCKS_PORT=40001 WARP_KEY=xxxxxxxx-xxxxxxxx-xxxxxxxx bash warp-ai.sh install
+SOCKS_PORT=40001 WARP_KEY=xxxxxxxx-xxxxxxxx-xxxxxxxx bash <(curl -fsSL https://raw.githubusercontent.com/acc66/warp-ai-unlock/main/warp-ai.sh) install
 ```
 
 改了端口的话，后面后端配置里的 `40000` 也要一起改。
@@ -191,7 +191,7 @@ journalctl -u xboard-node -n 30 --no-pager
 - 面板只检查 JSON 格式对不对，不检查内容，保存成功不代表配置正确，以节点日志为准。
 - 想把其他服务（比如 Netflix）也走 WARP，往 `domain_suffixes` 里加域名就行。
 
-忘了怎么填的话，在节点上运行 `bash warp-ai.sh panel`，会重新打印这几段。
+忘了怎么填的话，在节点上运行 `warp-ai panel`，会重新打印这几段。
 
 ---
 
@@ -293,7 +293,7 @@ soga log    # 看有没有报错
 **节点上：**
 
 ```bash
-bash warp-ai.sh check
+warp-ai check
 ```
 
 WARP 列都是 `Yes`，说明 WARP 出口可以解锁。
@@ -332,10 +332,10 @@ WARP 列都是 `Yes`，说明 WARP 出口可以解锁。
 已经装好的节点不用重装：
 
 ```bash
-bash warp-ai.sh key xxxxxxxx-xxxxxxxx-xxxxxxxx
+warp-ai key xxxxxxxx-xxxxxxxx-xxxxxxxx
 ```
 
-也可以运行 `bash warp-ai.sh` 进菜单，选 5。
+也可以运行 `warp-ai` 进菜单，选 5。
 
 看到 `WARP+ 已生效（Account type: unlimited）` 就成功了。一个 key 最多绑 5 台设备（手机也算一台）。绑定失败（key 无效或已绑满）时会自动退回原来的账户，不会断网。
 
@@ -353,24 +353,46 @@ cd /etc/warp-ai && wgcf status
 
 ## 6. 管理命令
 
+安装完成后，系统里会多一个 `warp-ai` 命令：
+
 ```bash
-bash warp-ai.sh            # 交互菜单
-bash warp-ai.sh install    # 安装 / 重装
-bash warp-ai.sh check      # AI 解锁检测（直连 vs WARP）
-bash warp-ai.sh key <key>  # 绑定 / 更换 WARP+ key
-bash warp-ai.sh status     # 服务状态 + WARP 连通性
-bash warp-ai.sh panel      # 重新打印面板 JSON
-bash warp-ai.sh uninstall  # 卸载
+warp-ai               # 交互菜单
+warp-ai install       # 安装 / 重装
+warp-ai check         # AI 解锁检测（直连 vs WARP）
+warp-ai key <key>     # 绑定 / 更换 WARP+ key
+warp-ai status        # 服务状态 + WARP 连通性
+warp-ai panel         # 重新打印面板 JSON
+warp-ai version       # 查看当前版本和最新版本
+warp-ai update        # 在线升级
+warp-ai uninstall     # 卸载
 
 systemctl restart warp-ai  # 重启 WARP
 journalctl -u warp-ai -f   # 实时日志
 ```
 
-没下载到本地的话，把 `bash warp-ai.sh` 换成：
+### 在线升级
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/acc66/warp-ai-unlock/main/warp-ai.sh)
+warp-ai update
 ```
+
+会做这几件事：
+
+1. 从 GitHub 下载最新脚本，先检查语法，没问题才替换（下载失败或文件损坏时保留旧版本）
+2. 把 wgcf、wireproxy 更新到最新 release
+3. 重启 `warp-ai` 服务，自检 WARP 连通性
+
+WARP 账户、已绑定的 key、端口配置都不会动，升级不会换出口 IP。
+
+版本号没变也想重新拉一遍：`warp-ai update -f`。
+
+**v1.1.0 之前装的节点**还没有 `warp-ai` 命令，先运行一次：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/acc66/warp-ai-unlock/main/warp-ai.sh) update
+```
+
+以后就能直接用 `warp-ai` 了。
 
 文件位置：
 
@@ -406,7 +428,7 @@ Google 的 IP 库把你的机器判成了中国。按上面配好路由后，Gem
 WARP 出口 IP 是很多人共用的，偶尔会被 AI 网站限制。重新注册就能换一个 IP：
 
 ```bash
-bash warp-ai.sh uninstall && bash warp-ai.sh install
+warp-ai uninstall && warp-ai install
 ```
 
 注意：重新注册会生成新账户，之前绑的 WARP+ key 要重新绑定。
@@ -428,8 +450,8 @@ bash <(curl -fsSL https://raw.githubusercontent.com/acc66/warp-ai-unlock/main/wa
 自动选得不对的话，可以手动指定：
 
 ```bash
-WARP_ENDPOINT=162.159.192.1:2408 bash warp-ai.sh install              # 走 IPv4
-WARP_ENDPOINT=[2606:4700:d0::a29f:c001]:2408 bash warp-ai.sh install  # 走 IPv6
+WARP_ENDPOINT=162.159.192.1:2408 warp-ai install              # 走 IPv4
+WARP_ENDPOINT=[2606:4700:d0::a29f:c001]:2408 warp-ai install  # 走 IPv6
 ```
 
 握手正常但连不上时，2408 端口可能被封，可以换 500、1701、4500 这几个端口试试。
