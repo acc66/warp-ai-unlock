@@ -191,6 +191,20 @@ journalctl -u xboard-node -n 30 --no-pager
 - 面板只检查 JSON 格式对不对，不检查内容，保存成功不代表配置正确，以节点日志为准。
 - 想把其他服务（比如 Netflix）也走 WARP，往 `domain_suffixes` 里加域名就行。
 
+### 已覆盖的服务
+
+| 服务 | 域名 |
+|------|------|
+| ChatGPT / Sora | `openai.com` `chatgpt.com` `oaistatic.com` `oaiusercontent.com` `sora.com` |
+| Claude | `anthropic.com` `claude.ai` `claude.com` |
+| Gemini / AI Studio / NotebookLM | `gemini.google.com` `bard.google.com` `aistudio.google.com` `makersuite.google.com` `notebooklm.google.com` `generativelanguage.googleapis.com` 等 |
+| Meta AI（Muse） | `meta.ai` |
+| Grok | `x.ai` `grok.com` |
+| Perplexity | `perplexity.ai` |
+| Copilot | `copilot.microsoft.com` |
+
+规则是后缀匹配，`meta.ai` 会把 `www.meta.ai` 等所有子域名一起覆盖。Meta AI 登录时会跳到 facebook.com / instagram.com，这两个域名不用加，加了反而会让整个 Facebook / Instagram 都走 WARP。
+
 忘了怎么填的话，在节点上运行 `warp-ai panel`，会重新打印这几段。
 
 ---
@@ -251,11 +265,13 @@ rules=[
 	"domain:waa-pa.clients6.google.com",
 	"domain:robinfrontend-pa.googleapis.com",
 
+	# Meta AI（Muse）
+	"domain:meta.ai",
+
 	# 其他
 	"domain:perplexity.ai",
 	"domain:x.ai",
-	"domain:grok.com",
-	"domain:meta.ai"
+	"domain:grok.com"
 ]
 
 [[routes.Outs]]
