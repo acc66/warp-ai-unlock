@@ -99,6 +99,7 @@ Xray 内核换成：
 ```bash
 bash warp-ai.sh            # 交互菜单
 bash warp-ai.sh check      # AI 解锁检测（直连 vs WARP）
+bash warp-ai.sh key <key>  # 绑定 / 更换 WARP+ key
 bash warp-ai.sh status     # 服务状态 + WARP 连通性
 bash warp-ai.sh panel      # 重新打印面板 JSON
 bash warp-ai.sh uninstall  # 卸载
@@ -113,13 +114,18 @@ journalctl -u warp-ai -f   # 查看日志
   ```bash
   WARP_KEY=你的key bash warp-ai.sh install
   ```
-  已经装过的话，先运行 `uninstall` 再重新 `install`，或者手动改 `/etc/warp-ai/wgcf-account.toml` 里的 `license_key`，再运行 `wgcf update && wgcf generate`。一个 key 最多绑 5 台设备。
+  已经装好的节点直接绑定，不用重装（菜单里选 5 也可以）：
+  ```bash
+  bash warp-ai.sh key xxxxxxxx-xxxxxxxx-xxxxxxxx
+  ```
+  绑定成功后，出口会显示 `warp=plus`。如果绑定失败（key 无效或已经绑满），会自动退回原来的账户，不会断网。一个 key 最多绑 5 台设备。
 
 解锁 AI 的关键是 IP 是否干净，跟速度关系不大，所以一般用免费版就够了。
 
 ## 常见问题
 
 - **注册失败**：Cloudflare 对注册接口有频率限制，过几分钟再试。
+- **直连 Gemini 显示 `No (CHN)`，而 ChatGPT 是 `Yes (US)`**：每家用的 IP 库不一样，Google 可能把你这台机器的 IP 判成中国。Gemini 的域名已经在路由规则里，下发后走 WARP 就能解决。
 - **AI 网站仍然打不开或提示地区不支持**：WARP 出口 IP 由 Cloudflare 分配，偶尔会分到被限制的段。可以运行 `bash warp-ai.sh uninstall && bash warp-ai.sh install` 重新注册换 IP，再用 `status` 查看出口 `loc`。
 - **规则不生效**：路由按域名匹配，客户端要以域名的形式发请求（默认都是这样）。确认面板里两个框的 JSON 都已保存，并且 `target` 和出站的 `tag` 一致（都是 `warp`）。
 - **纯 IPv6 机器**：脚本会自动切到 WARP 的 IPv6 endpoint。

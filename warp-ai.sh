@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # WARP SOCKS5 for XboardNode-Plus AI unlock
-# 用法: bash warp-ai.sh [install|uninstall|status|check|panel]，不带参数进入菜单
+# 用法: bash warp-ai.sh [install|uninstall|status|check|key|panel]，不带参数进入菜单
 set -uo pipefail
 
 WARP_DIR=/etc/warp-ai
@@ -72,16 +72,52 @@ register_warp() {
     wgcf register --accept-tos >/dev/null || die "WARP 注册失败（可能被 CF 限速，稍后重试）"
   fi
   # WARP+ license（可选）：WARP_KEY=xxxx bash warp-ai.sh install
-  if [[ -n "${WARP_KEY:-}" ]]; then
-    [[ "$WARP_KEY" =~ ^[A-Za-z0-9-]+$ ]] || die "WARP_KEY 格式不对"
-    sed -i "s/^license_key = .*/license_key = '${WARP_KEY}'/" wgcf-account.toml
-    wgcf update || red "WARP+ key 绑定失败，继续使用免费版"
+  [[ -n "${WARP_KEY:-}" ]] && apply_key "$WARP_KEY"
+  gen_profile
+}
+
+# 绑定 WARP+ key，失败返回 1（保留原账户继续用免费版）
+apply_key() {
+  local key=$1
+  [[ "$key" =~ ^[A-Za-z0-9]{8}-[A-Za-z0-9]{8}-[A-Za-z0-9]{8}$ ]] \
+    || { red "key 格式不对，应为 xxxxxxxx-xxxxxxxx-xxxxxxxx"; return 1; }
+  cd "$WARP_DIR" || return 1
+  cp wgcf-account.toml wgcf-account.toml.bak
+  sed -i "s/^license_key = .*/license_key = '${key}'/" wgcf-account.toml
+  if ! wgcf update; then
+    mv wgcf-account.toml.bak wgcf-account.toml
+    red "WARP+ key 绑定失败（key 无效或已绑满 5 台设备），继续使用原账户"
+    return 1
   fi
+  rm -f wgcf-account.toml.bak
+}
+
+gen_profile() {
+  cd "$WARP_DIR" || die "找不到 $WARP_DIR"
   wgcf generate >/dev/null || die "生成 WARP 配置失败"
-  # wireproxy 不需要 DNS/MTU 以外的字段；替换 endpoint 兼容纯 v6
+  # 替换 endpoint 兼容纯 v6
   local ep; ep=$(pick_endpoint)
   sed -i "s|^Endpoint = .*|Endpoint = ${ep}|" wgcf-profile.conf
   sed -i "s|^MTU = .*|MTU = 1280|" wgcf-profile.conf
+  chmod 644 wgcf-profile.conf
+}
+
+# 已安装的节点单独绑定 / 更换 WARP+ key
+do_key() {
+  [[ -f "$WARP_DIR/wgcf-account.toml" ]] || die "还没安装 WARP，先运行 install"
+  local key=${1:-}
+  [[ -z "$key" ]] && read -rp "输入 WARP+ key: " key </dev/tty
+  apply_key "$key" || return 1
+  gen_profile
+  systemctl restart ${SERVICE} || die "服务重启失败: journalctl -u ${SERVICE} -n 50"
+  sleep 3
+  if warp_ok | grep -q "warp=plus"; then
+    green "WARP+ 已生效"
+  else
+    warp_ok
+    yellow "key 已写入，但出口还没显示 warp=plus，稍后运行 status 再看"
+  fi
+  (cd "$WARP_DIR" && wgcf status 2>/dev/null | grep -iE "account type|quota|premium" )
 }
 
 write_config() {
@@ -160,15 +196,20 @@ check_claude() {
   fi
 }
 
+# Gemini 页面已无可靠的可用性标记，改为取 Google 识别的地区，对照不支持地区列表判断
+GEMINI_BLOCKED=" CHN HKG MAC RUS BLR CUB IRN PRK SYR "
+
 check_gemini() {
   local html region
-  html=$(curl "$@" -s -L -m 10 -A "$UA" https://gemini.google.com/ 2>/dev/null)
+  html=$(curl "$@" -s -L -m 10 -A "$UA" -H 'accept-language: en-US' https://gemini.google.com/ 2>/dev/null)
   [[ -z "$html" ]] && { echo "ERR Failed (Network)"; return; }
   region=$(grep -oE ',2,1,200,"[A-Z]{3}"' <<<"$html" | head -1 | grep -oE '[A-Z]{3}')
-  if grep -q '45631641,null,true' <<<"$html"; then
-    echo "OK Yes (${region:-?})"
+  if [[ -z "$region" ]]; then
+    echo "WARN Unknown"
+  elif [[ "$GEMINI_BLOCKED" == *" $region "* ]]; then
+    echo "NO No ($region)"
   else
-    echo "NO No (${region:-?})"
+    echo "OK Yes ($region)"
   fi
 }
 
@@ -265,7 +306,8 @@ menu() {
     echo " 2. AI 解锁检测"
     echo " 3. 查看状态"
     echo " 4. 打印面板配置"
-    echo " 5. 卸载"
+    echo " 5. 绑定 / 更换 WARP+ key"
+    echo " 6. 卸载"
     echo " 0. 退出"
     # 兼容 curl | bash：从终端读输入
     read -rp "请选择: " c </dev/tty || exit 0
@@ -274,7 +316,8 @@ menu() {
       2) check_ai ;;
       3) systemctl status ${SERVICE} --no-pager; warp_ok ;;
       4) print_panel ;;
-      5) need_root; do_uninstall ;;
+      5) need_root; do_key ;;
+      6) need_root; do_uninstall ;;
       0) exit 0 ;;
       *) red "无效选项" ;;
     esac
@@ -286,7 +329,8 @@ case "${1:-}" in
   uninstall) need_root; do_uninstall ;;
   status)    systemctl status ${SERVICE} --no-pager; warp_ok ;;
   check)     check_ai ;;
+  key)       need_root; do_key "${2:-}" ;;
   panel)     print_panel ;;
   "")        if [[ -r /dev/tty ]]; then menu; else check_ai; fi ;;
-  *) echo "用法: $0 [install|uninstall|status|check|panel]" ;;
+  *) echo "用法: $0 [install|uninstall|status|check|key|panel]" ;;
 esac
