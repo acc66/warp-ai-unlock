@@ -417,6 +417,23 @@ bash warp-ai.sh uninstall && bash warp-ai.sh install
 - soga：确认 WARP 规则在 `rules=["*"]` 前面，并且已经 `soga restart`
 - 路由按域名匹配，客户端要以域名的形式发请求（默认都是这样）。如果客户端在本地先解析成 IP 再连，规则匹配不到
 
+**日志报 `sendmmsg: network is unreachable`，握手一直重试**
+
+endpoint 的 IP 协议选错了，比如机器没有 IPv6，却连到了 IPv6 endpoint。重新运行 install 即可，账户和已绑定的 key 都会保留，脚本会按路由表重新选择：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/acc66/warp-ai-unlock/main/warp-ai.sh) install
+```
+
+自动选得不对的话，可以手动指定：
+
+```bash
+WARP_ENDPOINT=162.159.192.1:2408 bash warp-ai.sh install              # 走 IPv4
+WARP_ENDPOINT=[2606:4700:d0::a29f:c001]:2408 bash warp-ai.sh install  # 走 IPv6
+```
+
+握手正常但连不上时，2408 端口可能被封，可以换 500、1701、4500 这几个端口试试。
+
 **纯 IPv6 机器**
 
 脚本会自动改用 WARP 的 IPv6 endpoint，不用额外设置。

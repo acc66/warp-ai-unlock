@@ -57,12 +57,16 @@ install_wireproxy() {
   chmod +x "$BIN_DIR/wireproxy"
 }
 
-# 纯 v6 机器用 v6 endpoint，否则用 v4
+# 按路由表选 endpoint：有 v4 路由用 v4，只有 v6 才用 v6；可用 WARP_ENDPOINT 手动指定
 pick_endpoint() {
-  if curl -4 -fsS -m 5 https://www.cloudflare.com/cdn-cgi/trace >/dev/null 2>&1; then
+  if [[ -n "${WARP_ENDPOINT:-}" ]]; then
+    echo "$WARP_ENDPOINT"
+  elif ip -4 route get 162.159.192.1 >/dev/null 2>&1; then
     echo "162.159.192.1:2408"
-  else
+  elif ip -6 route get 2606:4700:d0::a29f:c001 >/dev/null 2>&1; then
     echo "[2606:4700:d0::a29f:c001]:2408"
+  else
+    echo "162.159.192.1:2408"
   fi
 }
 
