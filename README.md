@@ -219,11 +219,23 @@ soga 的路由不走面板下发，直接改节点上的 `/etc/soga/routes.toml`
 cp /etc/soga/routes.toml /etc/soga/routes.toml.bak
 ```
 
-### 第 2 步：编辑 routes.toml
+### 第 2 步：写入路由规则
+
+规则文件在仓库里：[soga/routes.toml](soga/routes.toml)。
+
+**情况一：原来的 routes.toml 里没有自定义规则**（新节点，或者只有默认内容），直接下载覆盖：
+
+```bash
+wget -O /etc/soga/routes.toml https://raw.githubusercontent.com/acc66/warp-ai-unlock/main/soga/routes.toml
+```
+
+**情况二：原来已经有中转之类的规则**，不要直接覆盖，否则原来的规则会丢。打开文件手动合并：
 
 ```bash
 nano /etc/soga/routes.toml
 ```
+
+把仓库文件里「AI 走 WARP」那一段（`[[routes]]` 加上它下面的 `[[routes.Outs]]`）粘到你原有规则的最前面。
 
 soga 从上往下匹配，**第一条命中的规则生效**。所以 WARP 规则要放在前面，`rules=["*"]` 兜底直连放在最后。
 

@@ -1,0 +1,64 @@
+# soga 路由规则：AI 服务走 WARP（warp-ai-unlock）
+# 用法：先安装 warp-ai，再把下面的内容合并进 /etc/soga/routes.toml，然后运行 soga restart
+# 规则从上往下匹配，第一条命中的生效；rules=["*"] 兜底直连必须放在最后
+
+enable=true
+
+# ========== AI 走 WARP ==========
+[[routes]]
+rules=[
+	# OpenAI / ChatGPT / Sora
+	"domain:openai.com",
+	"domain:chatgpt.com",
+	"domain:oaistatic.com",
+	"domain:oaiusercontent.com",
+	"domain:sora.com",
+
+	# Claude
+	"domain:anthropic.com",
+	"domain:claude.ai",
+	"domain:claude.com",
+
+	# Google Gemini / AI Studio / NotebookLM
+	"domain:gemini.google.com",
+	"domain:bard.google.com",
+	"domain:ai.google.dev",
+	"domain:aistudio.google.com",
+	"domain:makersuite.google.com",
+	"domain:notebooklm.google.com",
+	"domain:generativeai.google",
+	"domain:deepmind.com",
+	"domain:deepmind.google",
+	"domain:generativelanguage.googleapis.com",
+	"domain:proactivebackend-pa.googleapis.com",
+	"domain:aisandbox-pa.googleapis.com",
+	"domain:alkalimakersuite-pa.clients6.google.com",
+	"domain:alkalicore-pa.clients6.google.com",
+	"domain:waa-pa.clients6.google.com",
+	"domain:robinfrontend-pa.googleapis.com",
+
+	# Meta AI（Muse）
+	"domain:meta.ai",
+
+	# Grok / Perplexity
+	"domain:x.ai",
+	"domain:grok.com",
+	"domain:perplexity.ai"
+]
+
+[[routes.Outs]]
+listen=""          # 出口网卡 ip，不配置则由系统决定
+type="socks"
+server="127.0.0.1"
+port=40000         # 安装 warp-ai 时改过 SOCKS_PORT 的话，这里一起改
+username=""
+password=""
+
+# ========== 你原有的其他规则（中转等）放在这里 ==========
+
+
+# ========== 兜底直连，必须放最后 ==========
+[[routes]]
+rules=["*"]
+[[routes.Outs]]
+type="direct"
