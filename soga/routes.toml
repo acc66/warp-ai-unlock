@@ -39,6 +39,8 @@ rules=[
 
 	# Meta AI（Muse）
 	"domain:meta.ai",
+	"domain:metaaivm.com",
+	"domain:metaaiusercontent.com",
 
 	# Grok / Perplexity
 	"domain:x.ai",

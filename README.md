@@ -161,7 +161,7 @@ wp2 后台 → 节点列表 → 找到节点，点 **编辑** → 往下拉，�
         "gemini.google.com", "bard.google.com", "aistudio.google.com",
         "generativelanguage.googleapis.com", "alkalimakersuite-pa.clients6.google.com",
         "makersuite.google.com", "notebooklm.google.com", "deepmind.google",
-        "perplexity.ai", "x.ai", "grok.com", "copilot.microsoft.com", "meta.ai"
+        "perplexity.ai", "x.ai", "grok.com", "copilot.microsoft.com", "meta.ai", "metaaivm.com", "metaaiusercontent.com"
       ]
     },
     "action": {"type": "route", "target": "warp"}
@@ -198,7 +198,7 @@ journalctl -u xboard-node -n 30 --no-pager
 | ChatGPT / Sora | `openai.com` `chatgpt.com` `oaistatic.com` `oaiusercontent.com` `sora.com` |
 | Claude | `anthropic.com` `claude.ai` `claude.com` |
 | Gemini / AI Studio / NotebookLM | `gemini.google.com` `bard.google.com` `aistudio.google.com` `makersuite.google.com` `notebooklm.google.com` `generativelanguage.googleapis.com` 等 |
-| Meta AI（Muse） | `meta.ai` |
+| Meta AI（Muse） | `meta.ai` `metaaivm.com` `metaaiusercontent.com` |
 | Grok | `x.ai` `grok.com` |
 | Perplexity | `perplexity.ai` |
 | Copilot | `copilot.microsoft.com` |
@@ -279,6 +279,8 @@ rules=[
 
 	# Meta AI（Muse）
 	"domain:meta.ai",
+	"domain:metaaivm.com",
+	"domain:metaaiusercontent.com",
 
 	# 其他
 	"domain:perplexity.ai",
@@ -460,6 +462,15 @@ warp-ai uninstall && warp-ai install
 ```
 
 注意：重新注册会生成新账户，之前绑的 WARP+ key 要重新绑定。
+
+**Meta AI 提示「你所在的国家/地区目前无法使用 Meta AI」**
+
+按顺序排查：
+
+1. 确认规则里有 `meta.ai`、`metaaivm.com`、`metaaiusercontent.com` 三个域名（v1.1.1 起已包含）。用旧规则的话，按上面重新填写面板或 routes.toml。
+2. 浏览器开无痕窗口重新打开，或者清掉 meta.ai 的 cookie。Meta 会把「地区不可用」缓存在会话里，改好路由后，旧页面可能还是显示不可用。
+3. 手机 App 要先彻底关掉再打开，必要时退出登录再重新登录。
+4. 还是不行，说明 Meta 拒绝了这个 WARP 出口 IP（Meta 对数据中心和 VPN IP 比较严格）。可以运行 `warp-ai uninstall && warp-ai install` 重新注册换 IP；或者在 soga / 面板里给 Meta AI 单独配一个家宽或其他干净 IP 的出站。
 
 **规则不生效，AI 还是走直连**
 

@@ -3,7 +3,7 @@
 # 用法: warp-ai [install|uninstall|status|check|key|panel|update|version]，不带参数进入菜单
 set -uo pipefail
 
-VERSION=1.1.0
+VERSION=1.1.1
 SCRIPT_URL=https://raw.githubusercontent.com/acc66/warp-ai-unlock/main/warp-ai.sh
 SELF=/usr/local/bin/warp-ai
 
@@ -264,7 +264,7 @@ check_ai() {
 }
 
 print_panel() {
-  local domains='"openai.com","chatgpt.com","oaistatic.com","oaiusercontent.com","sora.com","anthropic.com","claude.ai","claude.com","gemini.google.com","bard.google.com","aistudio.google.com","generativelanguage.googleapis.com","alkalimakersuite-pa.clients6.google.com","makersuite.google.com","notebooklm.google.com","deepmind.google","perplexity.ai","x.ai","grok.com","copilot.microsoft.com","meta.ai"'
+  local domains='"openai.com","chatgpt.com","oaistatic.com","oaiusercontent.com","sora.com","anthropic.com","claude.ai","claude.com","gemini.google.com","bard.google.com","aistudio.google.com","generativelanguage.googleapis.com","alkalimakersuite-pa.clients6.google.com","makersuite.google.com","notebooklm.google.com","deepmind.google","perplexity.ai","x.ai","grok.com","copilot.microsoft.com","meta.ai","metaaivm.com","metaaiusercontent.com"'
 
   green "\n===== wp2 后台 -> 节点 -> 编辑，填两个框 ====="
   echo -e "\n【自定义出站（JSON）】sing-box 内核（XboardNode-Plus 默认）:"
