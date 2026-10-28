@@ -111,13 +111,14 @@ do_key() {
   gen_profile
   systemctl restart ${SERVICE} || die "服务重启失败: journalctl -u ${SERVICE} -n 50"
   sleep 3
-  if warp_ok | grep -q "warp=plus"; then
-    green "WARP+ 已生效"
-  else
-    warp_ok
-    yellow "key 已写入，但出口还没显示 warp=plus，稍后运行 status 再看"
-  fi
-  (cd "$WARP_DIR" && wgcf status 2>/dev/null | grep -iE "account type|quota|premium" )
+  warp_ok
+  # trace 里的 warp=plus 对 wgcf 客户端不可靠，以账户类型为准
+  local type
+  type=$(cd "$WARP_DIR" && wgcf status 2>/dev/null | sed -n 's/^Account type *: *//p')
+  case "$type" in
+    unlimited|limited) green "WARP+ 已生效（Account type: $type）" ;;
+    *) yellow "账户类型为 ${type:-未知}，key 没生效，确认是 1.1.1.1 App 里 WARP+ 的 key" ;;
+  esac
 }
 
 write_config() {
