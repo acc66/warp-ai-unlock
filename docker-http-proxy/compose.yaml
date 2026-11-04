@@ -1,31 +1,144 @@
 services:
-  warp:
+  warp-1:
     image: ghcr.io/kingcc/warproxy:latest
     restart: unless-stopped
     environment:
       SOCKS5_PORT: '1080'
       HTTP_PORT: ''
     volumes:
-      - warp-config:/config
+      - warp-config-1:/config
     networks:
-      - internal
-  http-proxy:
+      - internal-1
+  http-proxy-1:
     build: .
     restart: unless-stopped
     depends_on:
-      - warp
+      - warp-1
     environment:
       PROXY_USER: ${PROXY_USER:?Set PROXY_USER in .env}
       PROXY_PASS: ${PROXY_PASS:?Set PROXY_PASS in .env}
-      SOCKS_ADDR: warp:1080
+      SOCKS_ADDR: warp-1:1080
       LISTEN_ADDR: ':8080'
     ports:
-      - '${BIND_IP:-0.0.0.0}:${PROXY_PORT:-40001}:8080'
+      - '${BIND_IP:-0.0.0.0}:40001:8080'
     networks:
-      - internal
+      - internal-1
+    security_opt:
+      - no-new-privileges:true
+  warp-2:
+    image: ghcr.io/kingcc/warproxy:latest
+    restart: unless-stopped
+    environment:
+      SOCKS5_PORT: '1080'
+      HTTP_PORT: ''
+    volumes:
+      - warp-config-2:/config
+    networks:
+      - internal-2
+  http-proxy-2:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      - warp-2
+    environment:
+      PROXY_USER: ${PROXY_USER:?Set PROXY_USER in .env}
+      PROXY_PASS: ${PROXY_PASS:?Set PROXY_PASS in .env}
+      SOCKS_ADDR: warp-2:1080
+      LISTEN_ADDR: ':8080'
+    ports:
+      - '${BIND_IP:-0.0.0.0}:40002:8080'
+    networks:
+      - internal-2
+    security_opt:
+      - no-new-privileges:true
+  warp-3:
+    image: ghcr.io/kingcc/warproxy:latest
+    restart: unless-stopped
+    environment:
+      SOCKS5_PORT: '1080'
+      HTTP_PORT: ''
+    volumes:
+      - warp-config-3:/config
+    networks:
+      - internal-3
+  http-proxy-3:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      - warp-3
+    environment:
+      PROXY_USER: ${PROXY_USER:?Set PROXY_USER in .env}
+      PROXY_PASS: ${PROXY_PASS:?Set PROXY_PASS in .env}
+      SOCKS_ADDR: warp-3:1080
+      LISTEN_ADDR: ':8080'
+    ports:
+      - '${BIND_IP:-0.0.0.0}:40003:8080'
+    networks:
+      - internal-3
+    security_opt:
+      - no-new-privileges:true
+  warp-4:
+    image: ghcr.io/kingcc/warproxy:latest
+    restart: unless-stopped
+    environment:
+      SOCKS5_PORT: '1080'
+      HTTP_PORT: ''
+    volumes:
+      - warp-config-4:/config
+    networks:
+      - internal-4
+  http-proxy-4:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      - warp-4
+    environment:
+      PROXY_USER: ${PROXY_USER:?Set PROXY_USER in .env}
+      PROXY_PASS: ${PROXY_PASS:?Set PROXY_PASS in .env}
+      SOCKS_ADDR: warp-4:1080
+      LISTEN_ADDR: ':8080'
+    ports:
+      - '${BIND_IP:-0.0.0.0}:40004:8080'
+    networks:
+      - internal-4
+    security_opt:
+      - no-new-privileges:true
+  warp-5:
+    image: ghcr.io/kingcc/warproxy:latest
+    restart: unless-stopped
+    environment:
+      SOCKS5_PORT: '1080'
+      HTTP_PORT: ''
+    volumes:
+      - warp-config-5:/config
+    networks:
+      - internal-5
+  http-proxy-5:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      - warp-5
+    environment:
+      PROXY_USER: ${PROXY_USER:?Set PROXY_USER in .env}
+      PROXY_PASS: ${PROXY_PASS:?Set PROXY_PASS in .env}
+      SOCKS_ADDR: warp-5:1080
+      LISTEN_ADDR: ':8080'
+    ports:
+      - '${BIND_IP:-0.0.0.0}:40005:8080'
+    networks:
+      - internal-5
     security_opt:
       - no-new-privileges:true
 networks:
-  internal:
+  internal-1: {}
+  internal-2: {}
+  internal-3: {}
+  internal-4: {}
+  internal-5: {}
 volumes:
-  warp-config:
+  warp-config-1:
+    name: docker-http-proxy_warp-config
+  warp-config-2: {}
+  warp-config-3: {}
+  warp-config-4: {}
+  warp-config-5: {}
