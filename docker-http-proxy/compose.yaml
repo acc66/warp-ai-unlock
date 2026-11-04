@@ -1,0 +1,31 @@
+services:
+  warp:
+    image: ghcr.io/kingcc/warproxy:latest
+    restart: unless-stopped
+    environment:
+      SOCKS5_PORT: '1080'
+      HTTP_PORT: ''
+    volumes:
+      - warp-config:/config
+    networks:
+      - internal
+  http-proxy:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      - warp
+    environment:
+      PROXY_USER: ${PROXY_USER:?Set PROXY_USER in .env}
+      PROXY_PASS: ${PROXY_PASS:?Set PROXY_PASS in .env}
+      SOCKS_ADDR: warp:1080
+      LISTEN_ADDR: ':8080'
+    ports:
+      - '${BIND_IP:-0.0.0.0}:${PROXY_PORT:-40001}:8080'
+    networks:
+      - internal
+    security_opt:
+      - no-new-privileges:true
+networks:
+  internal:
+volumes:
+  warp-config:
