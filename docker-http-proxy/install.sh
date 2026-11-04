@@ -16,7 +16,9 @@ if [[ ! -f .env ]]; then
 fi
 chmod 600 .env
 docker compose config -q
-docker compose up -d --build
+# Stop old single-instance containers before reusing port 40001; keep its named WARP volume.
+docker rm -f docker-http-proxy-http-proxy-1 docker-http-proxy-warp-1 2>/dev/null || true
+docker compose up -d --build --remove-orphans
 echo 'Installed five HTTP proxy ports 40001-40005.'
 echo 'Run: cd /opt/warp-http-proxy/docker-http-proxy && bash manage.sh check'
 echo 'Run: bash manage.sh list YOUR_PUBLIC_IP'
