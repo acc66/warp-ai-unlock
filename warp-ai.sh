@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
 # WARP SOCKS5 for XboardNode-Plus AI unlock
-# 用法: warp-ai [install|uninstall|status|check|key|panel|update|version]，不带参数进入菜单
+# 用法: warp-ai [install|uninstall|status|check|key|panel|update|version|timer]，不带参数进入菜单
 set -uo pipefail
 
-VERSION=1.1.1
+VERSION=1.2.0
 SCRIPT_URL=https://raw.githubusercontent.com/acc66/warp-ai-unlock/main/warp-ai.sh
 SELF=/usr/local/bin/warp-ai
+SOURCE_SCRIPT=${BASH_SOURCE[0]}
 
 WARP_DIR=/etc/warp-ai
 BIN_DIR=/usr/local/bin
 SOCKS_PORT="${SOCKS_PORT:-40000}"
 SERVICE=warp-ai
+TIMER_UNIT=${SERVICE}-reconnect
+SYSTEMD_DIR=/etc/systemd/system
 WGCF_FALLBACK=2.2.29
 WIREPROXY_FALLBACK=v1.0.9
 
@@ -61,7 +64,10 @@ install_wireproxy() {
   local d; d=$(mktemp -d)
   curl -fL "https://github.com/whyvl/wireproxy/releases/download/${v}/wireproxy_linux_${ARCH}.tar.gz" \
     | tar xz -C "$d" wireproxy || { rm -rf "$d"; die "wireproxy 下载失败"; }
-  chmod +x "$d/wireproxy" && mv -f "$d/wireproxy" "$BIN_DIR/wireproxy"
+  if ! chmod +x "$d/wireproxy" || ! mv -f "$d/wireproxy" "$BIN_DIR/wireproxy"; then
+    rm -rf "$d"
+    return 1
+  fi
   rm -rf "$d"
 }
 
@@ -158,8 +164,8 @@ NoNewPrivileges=yes
 WantedBy=multi-user.target
 EOF
   chmod 644 "$WARP_DIR"/*.conf
-  systemctl daemon-reload
-  systemctl enable ${SERVICE} >/dev/null 2>&1
+  systemctl daemon-reload || return 1
+  systemctl enable ${SERVICE} >/dev/null 2>&1 || return 1
   systemctl restart ${SERVICE} || die "服务启动失败: journalctl -u ${SERVICE} -n 50"
 }
 
@@ -167,8 +173,12 @@ WARP_PX=(-x "socks5h://127.0.0.1:${SOCKS_PORT}")
 
 warp_ok() {
   local trace
-  trace=$(curl -s -m 10 "${WARP_PX[@]}" https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null)
-  if grep -qE "warp=(on|plus)" <<<"$trace"; then
+  if ! probe_http "${WARP_PX[@]}" https://www.cloudflare.com/cdn-cgi/trace; then
+    red "WARP 连接失败: $(probe_error)，查看日志: journalctl -u ${SERVICE} -n 50"
+    return 1
+  fi
+  trace=$PROBE_BODY
+  if [[ "$PROBE_CODE" == 200 ]] && grep -qE $'^warp=(on|plus)\r?$' <<<"$trace"; then
     green "WARP 正常: $(grep -E '^(ip|loc|warp)=' <<<"$trace" | tr '\n' ' ')"
   else
     red "WARP 未连通，查看日志: journalctl -u ${SERVICE} -n 50"
@@ -177,52 +187,130 @@ warp_ok() {
 }
 
 # ---------- AI 解锁检测，参数为 curl 代理参数（空 = 直连） ----------
-loc_of() { curl "$@" -s -m 8 "$URL_TRACE" 2>/dev/null | sed -n 's/^loc=//p'; }
+# 显式禁用环境代理；传入 -x 时使用指定代理，同时忽略 NO_PROXY 绕过规则。
+# curl 退出码比错误文本稳定，不依赖系统语言，也不泄露代理凭据。
+probe_error() {
+  case "$PROBE_RC" in
+    5) echo 'Proxy DNS' ;;
+    6) echo 'DNS' ;;
+    7) echo 'Connect' ;;
+    28) echo 'Timeout' ;;
+    35|60) echo 'TLS' ;;
+    97) echo 'SOCKS handshake' ;;
+    *) echo "curl:$PROBE_RC" ;;
+  esac
+}
+
+loc_of() {
+  if probe_http "$@" "$URL_TRACE" && [[ "$PROBE_CODE" == 200 ]]; then
+    sed -n 's/^loc=//p' <<<"$PROBE_BODY" | tr -d '\r'
+  fi
+}
+
+probe_http() {
+  local response meta
+  PROBE_BODY= PROBE_CODE=000 PROBE_URL= PROBE_RC=0
+  response=$(curl --disable --proxy '' --noproxy '' "$@" -sS -L \
+    --connect-timeout 5 -m 15 -A "$UA" \
+    -w '\n%{http_code} %{url_effective}' 2>/dev/null) || PROBE_RC=$?
+  meta=${response##*$'\n'}
+  PROBE_BODY=${response%$'\n'*}
+  PROBE_CODE=${meta%% *}
+  PROBE_URL=${meta#* }
+  (( PROBE_RC == 0 ))
+}
+
+probe_challenged() {
+  grep -qiE 'captcha|just a moment|cf-chl-|access denied' <<<"$PROBE_BODY"
+}
+
+probe_unknown() {
+  if probe_challenged; then
+    echo "Challenge/HTTP $PROBE_CODE"
+  else
+    echo "HTTP $PROBE_CODE"
+  fi
+}
 
 check_chatgpt() {
-  local web ios loc w=0 i=0
-  web=$(curl "$@" -s -m 10 -A "$UA" https://api.openai.com/compliance/cookie_requirements \
-    -H 'authorization: Bearer null' -H 'origin: https://platform.openai.com' \
-    -H 'referer: https://platform.openai.com/' 2>/dev/null)
-  ios=$(curl "$@" -s -m 10 -A "$UA" https://ios.chat.openai.com/ 2>/dev/null)
-  [[ -z "$web" && -z "$ios" ]] && { echo "ERR Failed (Network)"; return; }
-  grep -qi 'unsupported_country' <<<"$web" && w=1
-  grep -qi 'VPN' <<<"$ios" && i=1
+  local region_state=unknown ios_state=unknown loc
+  if probe_http "$@" https://api.openai.com/compliance/cookie_requirements \
+      -H 'authorization: Bearer null' -H 'origin: https://platform.openai.com' \
+      -H 'referer: https://platform.openai.com/'; then
+    if grep -qiE 'unsupported_country|unsupported_country_region_territory' <<<"$PROBE_BODY"; then
+      region_state=blocked
+    elif probe_challenged; then
+      region_state=$(probe_unknown)
+    elif [[ "$PROBE_CODE" == 2?? ]] && [[ "$PROBE_BODY" =~ ^[[:space:]]*\{ ]] \
+        && ! grep -qiE '"(error|errors)"[[:space:]]*:' <<<"$PROBE_BODY"; then
+      region_state=ok
+    else
+      region_state=$(probe_unknown)
+    fi
+  else
+    region_state=$(probe_error)
+  fi
+  if probe_http "$@" https://ios.chat.openai.com/; then
+    if grep -qiE 'unsupported_country|blocked_why_headline|disallowed isp|VPN you are using|Please disable your VPN' <<<"$PROBE_BODY"; then
+      ios_state=blocked
+    elif [[ "$PROBE_CODE" == 2?? && -n "$PROBE_BODY" ]] \
+        && ! probe_challenged; then
+      ios_state=ok
+    else
+      ios_state=$(probe_unknown)
+    fi
+  else
+    ios_state=$(probe_error)
+  fi
   loc=$(URL_TRACE=https://chatgpt.com/cdn-cgi/trace loc_of "$@")
-  case "$w$i" in
-    00) echo "OK Yes (${loc:-?})" ;;
-    01) echo "WARN Web Only (${loc:-?})" ;;
-    10) echo "WARN App Only (${loc:-?})" ;;
-    11) echo "NO No (${loc:-?})" ;;
+  # compliance 端点只检查 OpenAI 地区策略，不代表 ChatGPT 网页已通过。
+  # App 探测失败时仍保留已经确认的地区结果。
+  case "$region_state/$ios_state" in
+    ok/ok) echo "OK Region+App OK (${loc:-?})" ;;
+    ok/blocked) echo "WARN Region OK; App blocked (${loc:-?})" ;;
+    blocked/ok) echo "WARN Region blocked; App OK (${loc:-?})" ;;
+    blocked/blocked) echo "NO Region+App blocked (${loc:-?})" ;;
+    ok/*) echo "WARN Region OK; App:$ios_state" ;;
+    blocked/*) echo "NO Region blocked; App:$ios_state" ;;
+    *) echo "WARN Region:$region_state; App:$ios_state" ;;
   esac
 }
 
 check_claude() {
-  local url loc
-  url=$(curl "$@" -s -L -m 10 -A "$UA" -o /dev/null -w '%{url_effective}' https://claude.ai/ 2>/dev/null)
-  [[ -z "$url" ]] && { echo "ERR Failed (Network)"; return; }
-  loc=$(URL_TRACE=https://claude.ai/cdn-cgi/trace loc_of "$@")
-  if [[ "$url" == *app-unavailable-in-region* ]]; then
-    echo "NO No (${loc:-?})"
-  else
-    echo "OK Yes (${loc:-?})"
+  local loc
+  if ! probe_http "$@" https://claude.ai/; then
+    echo "ERR Failed ($(probe_error))"; return
   fi
+  if [[ "$PROBE_URL" == *app-unavailable-in-region* ]]; then
+    echo "NO No (Region)"; return
+  fi
+  if [[ "$PROBE_CODE" != 2?? || -z "$PROBE_BODY" ]] \
+      || grep -qiE 'captcha|just a moment|cf-chl-|access denied' <<<"$PROBE_BODY"; then
+    echo "WARN Probe blocked ($(probe_unknown))"; return
+  fi
+  loc=$(URL_TRACE=https://claude.ai/cdn-cgi/trace loc_of "$@")
+  echo "OK Page OK (${loc:-?})"
 }
 
-# Gemini 页面已无可靠的可用性标记，改为取 Google 识别的地区，对照不支持地区列表判断
-GEMINI_BLOCKED=" CHN HKG MAC RUS BLR CUB IRN PRK SYR "
+# Google 页面中的地区代码仅作参考；Page OK 只表示页面可访问，不证明账号能对话。
 
 check_gemini() {
   local html region
-  html=$(curl "$@" -s -L -m 10 -A "$UA" -H 'accept-language: en-US' https://gemini.google.com/ 2>/dev/null)
-  [[ -z "$html" ]] && { echo "ERR Failed (Network)"; return; }
+  if ! probe_http "$@" -H 'accept-language: en-US' https://gemini.google.com/; then
+    echo "ERR Failed ($(probe_error))"; return
+  fi
+  if [[ "$PROBE_CODE" != 2?? || -z "$PROBE_BODY" ]]; then
+    echo "WARN Probe blocked ($(probe_unknown))"; return
+  fi
+  if probe_challenged; then
+    echo "WARN Probe blocked ($(probe_unknown))"; return
+  fi
+  html=$PROBE_BODY
   region=$(grep -oE ',2,1,200,"[A-Z]{3}"' <<<"$html" | head -1 | grep -oE '[A-Z]{3}')
   if [[ -z "$region" ]]; then
-    echo "WARN Unknown"
-  elif [[ "$GEMINI_BLOCKED" == *" $region "* ]]; then
-    echo "NO No ($region)"
+    echo "WARN Page OK (Region:unparsed)"
   else
-    echo "OK Yes ($region)"
+    echo "OK Page OK (Region:$region)"
   fi
 }
 
@@ -230,37 +318,68 @@ check_gemini() {
 paint() { # 按结果前缀上色
   local s=${1#* }
   case "${1%% *}" in
-    OK) printf '\033[32m%-18s\033[0m' "$s" ;;
-    WARN) printf '\033[33m%-18s\033[0m' "$s" ;;
-    NO|ERR) printf '\033[31m%-18s\033[0m' "$s" ;;
-    *) printf '%-18s' "$1" ;;
+    OK) printf '\033[32m%-58s\033[0m' "$s" ;;
+    WARN) printf '\033[33m%-58s\033[0m' "$s" ;;
+    NO|ERR) printf '\033[31m%-58s\033[0m' "$s" ;;
+    *) printf '%-58s' "$1" ;;
   esac
 }
 
 check_ai() {
-  local has_warp=0 svc
-  curl -s -m 8 "${WARP_PX[@]}" https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null \
-    | grep -qE "warp=(on|plus)" && has_warp=1
+  local has_warp=0 svc direct_trace= warp_trace= direct_error= warp_error=
+  if probe_http https://www.cloudflare.com/cdn-cgi/trace; then
+    direct_trace=$PROBE_BODY
+    [[ "$PROBE_CODE" == 200 ]] || direct_error="HTTP $PROBE_CODE"
+  else
+    direct_error=$(probe_error)
+  fi
+  if probe_http "${WARP_PX[@]}" https://www.cloudflare.com/cdn-cgi/trace; then
+    warp_trace=$PROBE_BODY
+    if [[ "$PROBE_CODE" == 200 ]] && grep -qE $'^warp=(on|plus)\r?$' <<<"$warp_trace"; then
+      has_warp=1
+    else
+      warp_error="HTTP $PROBE_CODE / trace 未确认 WARP"
+    fi
+  else
+    warp_error=$(probe_error)
+  fi
 
   echo
   echo "============ AI 解锁检测 ============"
-  echo "直连出口: $(curl -s -m 8 https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null | sed -n 's/^ip=//p')"
+  echo "直连出口: $(sed -n 's/^ip=//p' <<<"$direct_trace")${direct_error:+ (失败: $direct_error)}"
   if (( has_warp )); then
-    echo "WARP 出口: $(curl -s -m 8 "${WARP_PX[@]}" https://www.cloudflare.com/cdn-cgi/trace | sed -n 's/^ip=//p')"
+    echo "WARP 出口: $(sed -n 's/^ip=//p' <<<"$warp_trace")"
   else
-    yellow "WARP 未安装或未运行，只检测直连"
+    yellow "WARP 检测失败: $warp_error（SOCKS 127.0.0.1:${SOCKS_PORT}），只检测直连"
   fi
   echo "-------------------------------------"
-  printf '%-12s%-18s%s\n' "Service" "Direct" "WARP"
+  printf '%-12s%-58s%s\n' "Service" "Direct" "WARP"
   local -A name=([chatgpt]=ChatGPT [claude]=Claude [gemini]=Gemini)
-  for svc in chatgpt claude gemini; do
-    printf '%-12s' "${name[$svc]}"
-    paint "$(check_$svc)"
-    if (( has_warp )); then paint "$(check_$svc "${WARP_PX[@]}")"; else printf -- '-'; fi
-    echo
-  done
+  # 每条探测有独立的进程/结果文件，避免多个服务串行等待超时。
+  # 子 shell 的 EXIT trap 仅清理本轮临时文件，不覆盖调用者的 trap。
+  (
+    local results
+    results=$(mktemp -d) || { red "无法创建检测临时目录"; exit 1; }
+    trap 'rm -rf -- "$results"' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    for svc in chatgpt claude gemini; do
+      "check_$svc" >"$results/$svc.direct" &
+      if (( has_warp )); then
+        "check_$svc" "${WARP_PX[@]}" >"$results/$svc.warp" &
+      fi
+    done
+    wait
+    for svc in chatgpt claude gemini; do
+      printf '%-12s' "${name[$svc]}"
+      paint "$(<"$results/$svc.direct")"
+      if (( has_warp )); then paint "$(<"$results/$svc.warp")"; else printf -- '-'; fi
+      echo
+    done
+  ) || return 1
   echo "-------------------------------------"
-  echo "直连已解锁就不需要 WARP；WARP 列为绿色时，面板下发路由后节点即可解锁。"
+  echo "Region OK=地区检查通过；Page OK=页面可访问；App OK=App 探测通过。均不保证账号能对话。"
+  echo "Probe blocked=检测请求被拦；Challenge=人机验证，无法确认解锁。DNS/Connect/Timeout/TLS 为网络错误。"
 }
 
 print_panel() {
@@ -292,14 +411,15 @@ EOF
 
 do_install() {
   detect_arch
-  install_deps
-  install_wgcf
-  install_wireproxy
-  register_warp
-  write_config
-  install_self
+  install_deps || die "依赖安装失败"
+  install_wgcf || die "wgcf 安装失败"
+  install_wireproxy || die "wireproxy 安装失败"
+  register_warp || die "WARP 配置失败"
+  write_config || die "服务配置失败"
+  install_self || die "warp-ai 命令安装失败"
   sleep 3
-  warp_ok && check_ai
+  warp_ok || return 1
+  check_ai || return 1
   print_panel
   green "\n以后直接运行 warp-ai 即可打开菜单"
 }
@@ -316,8 +436,19 @@ fetch_script() {
 
 # 装成 /usr/local/bin/warp-ai；用 mv 替换，避免覆盖正在运行的脚本
 install_self() {
-  local tmp; tmp=$(fetch_script) || { yellow "warp-ai 命令安装失败，可稍后运行 update"; return 1; }
-  chmod 755 "$tmp" && mv -f "$tmp" "$SELF"
+  local tmp
+  tmp=$(mktemp) || return 1
+  # 本地执行时安装当前脚本，避免下载旧版覆盖本地修复；管道执行才从远端下载。
+  if [[ -f "$SOURCE_SCRIPT" && -r "$SOURCE_SCRIPT" ]]; then
+    cp -- "$SOURCE_SCRIPT" "$tmp" || { rm -f "$tmp"; return 1; }
+  else
+    rm -f "$tmp"
+    tmp=$(fetch_script) || return 1
+  fi
+  if ! bash -n "$tmp" || ! chmod 755 "$tmp" || ! mv -f "$tmp" "$SELF"; then
+    rm -f "$tmp"
+    return 1
+  fi
 }
 
 remote_version() { curl -fsSL -m 10 "$SCRIPT_URL" 2>/dev/null | sed -n 's/^VERSION=//p' | head -1; }
@@ -337,6 +468,10 @@ do_update() {
   local tmp new
   tmp=$(fetch_script) || die "下载新版本失败，请检查网络"
   new=$(sed -n 's/^VERSION=//p' "$tmp" | head -1)
+  if [[ "$new" != "$VERSION" && "$(printf '%s\n' "$VERSION" "$new" | sort -V | head -1)" == "$new" ]]; then
+    rm -f "$tmp"
+    die "远端版本 $new 低于当前版本 $VERSION，已阻止降级"
+  fi
   if [[ "$new" == "$VERSION" && "${1:-}" != "-f" ]]; then
     green "已是最新版本 $VERSION"
   else
@@ -357,11 +492,108 @@ do_update() {
 }
 
 do_uninstall() {
+  timer_remove || return 1
   systemctl disable --now ${SERVICE} 2>/dev/null
   rm -f /etc/systemd/system/${SERVICE}.service "$BIN_DIR/wireproxy" "$BIN_DIR/wgcf" "$SELF"
   rm -rf "$WARP_DIR"
   systemctl daemon-reload
   green "已卸载"
+}
+
+# 定时重启只重连服务，不重新安装或注册账户。
+timer_status() {
+  if [[ ! -f "$SYSTEMD_DIR/$TIMER_UNIT.timer" ]]; then
+    echo "定时重启：未开启"
+    return 0
+  fi
+  local interval
+  interval=$(sed -n 's/^OnUnitActiveSec=//p' "$SYSTEMD_DIR/$TIMER_UNIT.timer")
+  echo "定时重启间隔：${interval:-未知}"
+  systemctl is-enabled "$TIMER_UNIT.timer" || return 1
+  systemctl list-timers --all "$TIMER_UNIT.timer" --no-pager
+}
+
+timer_set() {
+  local interval=${1-1h}
+  # 不把任意输入写入 systemd；支持正整数分钟、小时、天。
+  if [[ ! "$interval" =~ ^[1-9][0-9]{0,5}[mhd]$ ]]; then
+    red "间隔格式错误：请输入正整数加 m/h/d，例如 30m、1h、3h、1d"
+    return 1
+  fi
+  [[ -f "$SYSTEMD_DIR/$SERVICE.service" ]] || { red "请先安装 WARP"; return 1; }
+  cat > "$SYSTEMD_DIR/$TIMER_UNIT.service" <<EOF
+[Unit]
+Description=Reconnect WARP AI tunnel
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl try-restart $SERVICE.service
+EOF
+  [[ $? -eq 0 ]] || return 1
+  cat > "$SYSTEMD_DIR/$TIMER_UNIT.timer" <<EOF
+[Unit]
+Description=Reconnect WARP AI every $interval
+
+[Timer]
+OnActiveSec=$interval
+OnUnitActiveSec=$interval
+AccuracySec=1s
+Unit=$TIMER_UNIT.service
+
+[Install]
+WantedBy=timers.target
+EOF
+  [[ $? -eq 0 ]] || return 1
+  chmod 644 "$SYSTEMD_DIR/$TIMER_UNIT.service" "$SYSTEMD_DIR/$TIMER_UNIT.timer" || return 1
+  systemctl daemon-reload || return 1
+  systemctl enable "$TIMER_UNIT.timer" || return 1
+  # restart 让修改后的间隔从现在重新计时，不立即重启 WARP。
+  systemctl restart "$TIMER_UNIT.timer" || return 1
+  green "已开启每 $interval 重启 WARP（开机自动启用）"
+  timer_status
+}
+
+timer_remove() {
+  if [[ -f "$SYSTEMD_DIR/$TIMER_UNIT.timer" ]]; then
+    systemctl disable --now "$TIMER_UNIT.timer" || return 1
+  fi
+  if [[ -f "$SYSTEMD_DIR/$TIMER_UNIT.service" ]]; then
+    systemctl stop "$TIMER_UNIT.service" || return 1
+  fi
+  rm -f "$SYSTEMD_DIR/$TIMER_UNIT.timer" "$SYSTEMD_DIR/$TIMER_UNIT.service" || return 1
+  systemctl daemon-reload || return 1
+  green "已删除定时重启任务"
+}
+
+timer_menu() {
+  local choice interval
+  while true; do
+    echo
+    echo "===== 定时重启 WARP ====="
+    timer_status
+    echo " 1. 开启每小时重启"
+    echo " 2. 自定义重启间隔"
+    echo " 3. 删除定时任务"
+    echo " 0. 返回"
+    read -rp "请选择: " choice </dev/tty || return 0
+    case "$choice" in
+      1) need_root; timer_set 1h ;;
+      2) need_root
+         read -rp "输入间隔（如 30m=30分钟、3h=3小时、1d=1天）: " interval </dev/tty || return 0
+         timer_set "$interval" ;;
+      3) need_root; timer_remove ;;
+      0) return 0 ;;
+      *) red "无效选项" ;;
+    esac
+  done
+}
+
+do_timer() {
+  case "${1:-status}" in
+    status) timer_status ;;
+    off|delete) need_root; timer_remove ;;
+    *) need_root; timer_set "$1" ;;
+  esac
 }
 
 menu() {
@@ -376,6 +608,7 @@ menu() {
     echo " 5. 绑定 / 更换 WARP+ key"
     echo " 6. 在线升级"
     echo " 7. 卸载"
+    echo " 8. 定时重启（每小时 / 自定义 / 删除）"
     echo " 0. 退出"
     # 兼容 curl | bash：从终端读输入
     read -rp "请选择: " c </dev/tty || exit 0
@@ -387,6 +620,7 @@ menu() {
       5) need_root; do_key ;;
       6) need_root; do_update; exit 0 ;;
       7) need_root; do_uninstall ;;
+      8) timer_menu ;;
       0) exit 0 ;;
       *) red "无效选项" ;;
     esac
@@ -400,9 +634,10 @@ case "${1:-}" in
   check)     check_ai ;;
   key)       need_root; do_key "${2:-}" ;;
   panel)     print_panel ;;
+  timer)     do_timer "${2:-status}" ;;
   update)    need_root; do_update "${2:-}" ;;
   version|-v|--version) do_version ;;
   "")        if [[ -r /dev/tty ]]; then menu; else check_ai; fi ;;
   *) echo "warp-ai v${VERSION}"
-     echo "用法: warp-ai [install|uninstall|status|check|key|panel|update|version]" ;;
+     echo "用法: warp-ai [install|uninstall|status|check|key|panel|update|version|timer]" ;;
 esac

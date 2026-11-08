@@ -53,14 +53,14 @@ Gemini      No (CHN)          Yes (USA)
 
 | 结果 | 含义 |
 |------|------|
-| `Yes (地区)` | 可用 |
-| `No (地区)` | 地区不支持 |
-| `Web Only` / `App Only` | ChatGPT 只有网页版或只有 App 能用 |
-| `Failed (Network)` | 连不上，检查网络或 WARP |
+| `Region OK` | 地区策略检查通过 |
+| `App OK` | App 探测通过 |
+| `Page OK` | 页面可访问 |
+| `Region blocked` / `App blocked` | 探测发现明确的限制提示 |
+| `Probe blocked` / `Challenge` | 请求被拦截或遇到人机验证，无法确认解锁 |
+| `DNS` / `Connect` / `Timeout` / `TLS` | 网络错误 |
 
-括号里是该服务识别到的地区。各家用的 IP 库不一样，同一个 IP 在 OpenAI 那里显示 US，在 Google 那里可能显示 CHN，这很正常。
-
-**Direct 列全是 Yes 就不用装 WARP**，有 No 再继续往下装。
+上述结果均不保证账号能对话，最终需要通过节点在浏览器实际登录、发送消息验证。
 
 ## 2. 安装 WARP
 
@@ -394,11 +394,28 @@ warp-ai status        # 服务状态 + WARP 连通性
 warp-ai panel         # 重新打印面板 JSON
 warp-ai version       # 查看当前版本和最新版本
 warp-ai update        # 在线升级
-warp-ai uninstall     # 卸载
+warp-ai timer         # 查看定时重启状态
+warp-ai timer 1h      # 每小时重启
+warp-ai timer 30m     # 每30分钟重启（也支持 3h、1d）
+warp-ai timer off     # 删除定时重启任务
+warp-ai uninstall     # 卸载（同时删除定时任务）
 
 systemctl restart warp-ai  # 重启 WARP
 journalctl -u warp-ai -f   # 实时日志
 ```
+
+### 定时重启（菜单 8）
+
+运行 `warp-ai`，选择 **8**，再选择：
+
+1. 开启每小时重启
+2. 自定义重启间隔，例如 `30m`、`3h`、`1d`（正整数，单位为分钟/小时/天）
+3. 删除定时任务
+
+设置后从当前时间开始计时，开机自动启用；重复设置会覆盖原间隔。
+定时任务仅重启正在运行的 `warp-ai.service`，不重新安装或注册账户，不会拉起手动停止的服务。
+重启会短暂中断代理连接，可能更换出口 IP，但不保证每次更换或绕过网站风控。
+`warp-ai timer` 显示当前间隔和下次执行时间；卸载会一并删除定时任务。
 
 ### 在线升级
 
@@ -412,7 +429,7 @@ warp-ai update
 2. 把 wgcf、wireproxy 更新到最新 release
 3. 重启 `warp-ai` 服务，自检 WARP 连通性
 
-WARP 账户、已绑定的 key、端口配置都不会动，升级不会换出口 IP。
+WARP 账户、已绑定的 key、端口配置都不会动，重启服务可能更换出口 IP。
 
 版本号没变也想重新拉一遍：`warp-ai update -f`。
 
