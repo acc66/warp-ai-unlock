@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # WARP SOCKS5 for XboardNode-Plus AI unlock
-# 用法: warp-ai [install|uninstall|status|check|key|panel|update|version|timer]，不带参数进入菜单
+# 用法: warp-ai [install|uninstall|status|check|key|panel|update|version|timer|logs]，不带参数进入菜单
 set -uo pipefail
 
 VERSION=1.2.0
@@ -565,6 +565,14 @@ timer_remove() {
   green "已删除定时重启任务"
 }
 
+do_logs() {
+  case "${1:-}" in
+    "") journalctl -u "$SERVICE" -n 100 --no-pager ;;
+    -f|--follow) journalctl -u "$SERVICE" -n 100 -f ;;
+    *) echo "用法: warp-ai logs [-f|--follow]"; return 1 ;;
+  esac
+}
+
 timer_menu() {
   local choice interval
   while true; do
@@ -609,6 +617,7 @@ menu() {
     echo " 6. 在线升级"
     echo " 7. 卸载"
     echo " 8. 定时重启（每小时 / 自定义 / 删除）"
+    echo " 9. 查看日志（最近 100 条）"
     echo " 0. 退出"
     # 兼容 curl | bash：从终端读输入
     read -rp "请选择: " c </dev/tty || exit 0
@@ -621,6 +630,7 @@ menu() {
       6) need_root; do_update; exit 0 ;;
       7) need_root; do_uninstall ;;
       8) timer_menu ;;
+      9) do_logs ;;
       0) exit 0 ;;
       *) red "无效选项" ;;
     esac
@@ -632,6 +642,7 @@ case "${1:-}" in
   uninstall) need_root; do_uninstall ;;
   status)    systemctl status ${SERVICE} --no-pager; warp_ok ;;
   check)     check_ai ;;
+  logs|log)  do_logs "${2:-}" ;;
   key)       need_root; do_key "${2:-}" ;;
   panel)     print_panel ;;
   timer)     do_timer "${2:-status}" ;;
@@ -639,5 +650,5 @@ case "${1:-}" in
   version|-v|--version) do_version ;;
   "")        if [[ -r /dev/tty ]]; then menu; else check_ai; fi ;;
   *) echo "warp-ai v${VERSION}"
-     echo "用法: warp-ai [install|uninstall|status|check|key|panel|update|version|timer]" ;;
+     echo "用法: warp-ai [install|uninstall|status|check|key|panel|update|version|timer|logs]" ;;
 esac

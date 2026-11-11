@@ -391,6 +391,8 @@ warp-ai install       # 安装 / 重装
 warp-ai check         # AI 解锁检测（直连 vs WARP）
 warp-ai key <key>     # 绑定 / 更换 WARP+ key
 warp-ai status        # 服务状态 + WARP 连通性
+warp-ai logs          # 查看最近 100 条服务日志（菜单 9）
+warp-ai logs -f       # 持续查看实时日志（Ctrl+C 退出）
 warp-ai panel         # 重新打印面板 JSON
 warp-ai version       # 查看当前版本和最新版本
 warp-ai update        # 在线升级
