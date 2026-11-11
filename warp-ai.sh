@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # WARP SOCKS5 for XboardNode-Plus AI unlock
-# 用法: warp-ai [install|uninstall|status|check|key|panel|update|version|timer|logs]，不带参数进入菜单
+# 用法: warp-ai [install|uninstall|status|check|key|panel|update|version|timer|logs|device]，不带参数进入菜单
 set -uo pipefail
 
-VERSION=1.2.0
+VERSION=1.2.1
 SCRIPT_URL=https://raw.githubusercontent.com/acc66/warp-ai-unlock/main/warp-ai.sh
 SELF=/usr/local/bin/warp-ai
 SOURCE_SCRIPT=${BASH_SOURCE[0]}
@@ -565,6 +565,39 @@ timer_remove() {
   green "已删除定时重启任务"
 }
 
+# 只显示当前注册设备，避免混淆账户 ID 和同账户的其他设备。
+do_device() {
+  [[ -f "$WARP_DIR/wgcf-account.toml" ]] || { red "还没安装 WARP，先运行 install"; return 1; }
+  command -v wgcf >/dev/null 2>&1 || { red "找不到 wgcf，请先安装"; return 1; }
+  local details
+  if ! details=$(wgcf --config "$WARP_DIR/wgcf-account.toml" status); then
+    red "查询注册设备失败，请检查网络后重试"
+    return 1
+  fi
+  awk '
+    /^Id[[:space:]]*:/ { current = /\(current\)/ }
+    current && /^Id[[:space:]]*:/ {
+      id = $0
+      sub(/^Id[[:space:]]*:[[:space:]]*/, "", id)
+      sub(/[[:space:]]*\(current\).*/, "", id)
+    }
+    current && /^Name[[:space:]]*:/ {
+      name = $0
+      sub(/^Name[[:space:]]*:[[:space:]]*/, "", name)
+      print "设备名称: " name
+      print "设备 ID: " id
+      found = 1
+      exit
+    }
+    END {
+      if (!found) {
+        print "未找到当前注册设备，请运行 wgcf --config /etc/warp-ai/wgcf-account.toml status 查看"
+        exit 1
+      }
+    }
+  ' <<<"$details"
+}
+
 do_logs() {
   case "${1:-}" in
     "") journalctl -u "$SERVICE" -n 100 --no-pager ;;
@@ -618,6 +651,7 @@ menu() {
     echo " 7. 卸载"
     echo " 8. 定时重启（每小时 / 自定义 / 删除）"
     echo " 9. 查看日志（最近 100 条）"
+    echo "10. 查看注册设备名称 / ID"
     echo " 0. 退出"
     # 兼容 curl | bash：从终端读输入
     read -rp "请选择: " c </dev/tty || exit 0
@@ -631,6 +665,7 @@ menu() {
       7) need_root; do_uninstall ;;
       8) timer_menu ;;
       9) do_logs ;;
+      10) need_root; do_device ;;
       0) exit 0 ;;
       *) red "无效选项" ;;
     esac
@@ -643,6 +678,7 @@ case "${1:-}" in
   status)    systemctl status ${SERVICE} --no-pager; warp_ok ;;
   check)     check_ai ;;
   logs|log)  do_logs "${2:-}" ;;
+  device)    need_root; do_device ;;
   key)       need_root; do_key "${2:-}" ;;
   panel)     print_panel ;;
   timer)     do_timer "${2:-status}" ;;
@@ -650,5 +686,5 @@ case "${1:-}" in
   version|-v|--version) do_version ;;
   "")        if [[ -r /dev/tty ]]; then menu; else check_ai; fi ;;
   *) echo "warp-ai v${VERSION}"
-     echo "用法: warp-ai [install|uninstall|status|check|key|panel|update|version|timer|logs]" ;;
+     echo "用法: warp-ai [install|uninstall|status|check|key|panel|update|version|timer|logs|device]" ;;
 esac
